@@ -2,6 +2,8 @@
 #include <BLEUtils.h>
 #include <BLEScan.h>
 #include <BLEAdvertisedDevice.h>
+#include <Preferences.h>
+Preferences preferences;
 
 // GoPro BLE UUID definitions
 #define GOPRO_SERVICE_UUID        "0000fea6-0000-1000-8000-00805f9b34fb" 
@@ -12,6 +14,16 @@ bool doConnect = false;
 bool connected = false;
 BLERemoteCharacteristic* pRemoteCharacteristic;
 BLEAdvertisedDevice* myDevice;
+ 
+// Configuration thresholds (in milliseconds)
+const unsigned long DEBOUNCE_TIME = 50;   // Ignores rapid mechanical button noise
+const unsigned long LONG_PRESS_TIME = 2000; // Time required to register a long press (2 seconds)
+
+// State tracking variables
+int lastButtonState = HIGH;      // Previous loop state (assumes INPUT_PULLUP)
+unsigned long pressedTime  = 0;  // Timestamp of when the button went down
+unsigned long releasedTime = 0;  // Timestamp of when the button was let go
+bool isPressing = false;         // Flags if a press cycle is actively tracking
 
 // Custom Security Callback Required by GoPro
 class MySecurity : public BLESecurityCallbacks {
@@ -94,6 +106,33 @@ void setup() {
   pBLEScan->setWindow(449);
   pBLEScan->setActiveScan(true);
   pBLEScan->start(5, false);
+
+
+  // Open the "storage" namespace in read/write mode (false)
+  preferences.begin("storage", false);
+
+  // Read the permanent "boot_count" key. If it doesn't exist yet, return 0.
+  unsigned int counter = preferences.getUInt("boot_count", 0);
+
+  // Increment and display the data
+  counter++;
+  Serial.printf("This FireBeetle has booted %u times.\n", counter);
+
+  // Save the updated counter back to permanent Flash memory
+  preferences.putUInt("boot_count", counter);
+
+  // Close the preference namespace
+  preferences.end();
+}
+
+void startGroProRecoriding(){
+    uint8_t shutter_start[] = {0x03, 0x01, 0x01, 0x01};
+    sendGoProCommand(shutter_start, sizeof(shutter_start));
+}
+
+void stopGoProRecoding(){
+    uint8_t shutter_stop[] = {0x03, 0x01, 0x01, 0x00};
+    sendGoProCommand(shutter_stop, sizeof(shutter_stop));
 }
 
 
@@ -108,18 +147,56 @@ void loop() {
   }
 
   // Detect button press (Low state means pressed due to INPUT_PULLUP)
-  if (connected && digitalRead(BUTTON_PIN) == LOW) {
-    delay(50); // Simple Debounce
-    if (digitalRead(BUTTON_PIN) == LOW) {
-      Serial.println("Button Pressed: Triggering Shutter...");
-      
-      // Open GoPro hex command array to trigger Record/Shutter Start
-      uint8_t shutter_start[] = {0x03, 0x01, 0x01, 0x01};
-      sendGoProCommand(shutter_start, sizeof(shutter_start));
-      
-      // Wait for button release to prevent spamming
-      while(digitalRead(BUTTON_PIN) == LOW); 
+  if (connected) {
+
+
+  int currentButtonState = digitalRead(BUTTON_PIN);
+
+    // Condition A: Button was just transitionally PUSHED DOWN
+    if (lastButtonState == HIGH && currentButtonState == LOW) {
+      pressedTime = millis();
+      isPressing = true;
     }
+    
+    // Condition B: Button was just RELEASED
+    else if (lastButtonState == LOW && currentButtonState == HIGH) {
+      releasedTime = millis();
+      
+      // Calculate total duration the button was held down
+      unsigned long pressDuration = releasedTime - pressedTime;
+
+      // Check if the press lasted longer than mechanical noise (Valid Press)
+      if (pressDuration > DEBOUNCE_TIME) {
+        
+        if (pressDuration >= LONG_PRESS_TIME) {
+          Serial.printf("🔴 LONG PRESS Detected! Held for %lu ms.\n", pressDuration);
+          stopGoProRecoding();
+          // INSERT ACTION: e.g., Trigger factory reset / Wipe permanent memory
+        } 
+        else {
+          Serial.printf("🟢 SHORT PRESS Detected! Held for %lu ms.\n", pressDuration);
+          startGroProRecoriding();
+        }
+      }
+      isPressing = false;
+    }
+
+  // Save the current state for evaluation in the next execution cycle
+    lastButtonState = currentButtonState;
+
+    // delay(50); // Simple Debounce
+    // if (digitalRead(BUTTON_PIN) == LOW) {
+    //   Serial.println("Button Pressed: Triggering Shutter...");
+    //   startGroProRecoriding();
+    //   // Open GoPro hex command array to trigger Record/Shutter Start
+    //   // uint8_t shutter_start[] = {0x03, 0x01, 0x01, 0x01};
+    //   // uint8_t shutter_stop[] = {0x03, 0x01, 0x01, 0x00};
+    //   // uint8_t shutter_start[] = {0x02, 0x5E, 0x00};
+    //   // sendGoProCommand(shutter_start, sizeof(shutter_start));
+      
+    //   // Wait for button release to prevent spamming
+    //   while(digitalRead(BUTTON_PIN) == LOW); 
+    // }
   }
   delay(10);
 }
