@@ -3,6 +3,8 @@
 #include <BLEScan.h>
 #include <BLEAdvertisedDevice.h>
 #include <Preferences.h>
+
+
 Preferences preferences;
 
 // GoPro BLE UUID definitions
@@ -123,16 +125,6 @@ void setup() {
 
   // Close the preference namespace
   preferences.end();
-}
-
-void startGroProRecoriding(){
-    uint8_t shutter_start[] = {0x03, 0x01, 0x01, 0x01};
-    sendGoProCommand(shutter_start, sizeof(shutter_start));
-}
-
-void stopGoProRecoding(){
-    uint8_t shutter_stop[] = {0x03, 0x01, 0x01, 0x00};
-    sendGoProCommand(shutter_stop, sizeof(shutter_stop));
 }
 
 
